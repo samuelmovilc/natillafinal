@@ -11,16 +11,23 @@ export async function POST(req) {
     // 1. Iniciar sesión y obtener cookies/CSRF
     const loginUrl = 'https://demo.movilcontrol.com/login';
     const initialRes = await fetch(loginUrl);
-    let cookies = initialRes.headers.get('set-cookie');
+    
+    // Extraer cookies correctamente (sin romper por comas de fechas)
+    const setCookies = initialRes.headers.getSetCookie ? initialRes.headers.getSetCookie() : [];
+    if (setCookies.length === 0) {
+      // Fallback si no está disponible getSetCookie()
+      const rawCookies = initialRes.headers.get('set-cookie') || '';
+      const fallback = rawCookies.match(/(XSRF-TOKEN|movilcontrol_session)=([^;]+)/g) || [];
+      var cookieString = fallback.join('; ');
+    } else {
+      var cookieString = setCookies.map(c => c.split(';')[0]).join('; ');
+    }
+    
     const html = await initialRes.text();
     const csrfMatch = html.match(/<meta name="csrf-token" content="([^"]+)">/);
     const csrfToken = csrfMatch ? csrfMatch[1] : '';
 
     if (!csrfToken) throw new Error("No se pudo obtener el token CSRF");
-
-    // Limpiar cookies para fetch
-    const cookieArray = cookies.split(',').map(c => c.split(';')[0]);
-    let cookieString = cookieArray.join('; ');
 
     // 2. Hacer POST login
     const authRes = await fetch(loginUrl, {
@@ -42,10 +49,13 @@ export async function POST(req) {
     }
 
     // Obtener cookies de sesión autenticada
-    const authCookies = authRes.headers.get('set-cookie');
-    if (authCookies) {
-      const authCookieArray = authCookies.split(',').map(c => c.split(';')[0]);
-      cookieString = authCookieArray.join('; ');
+    const authSetCookies = authRes.headers.getSetCookie ? authRes.headers.getSetCookie() : [];
+    if (authSetCookies.length > 0) {
+      cookieString = authSetCookies.map(c => c.split(';')[0]).join('; ');
+    } else {
+      const authRaw = authRes.headers.get('set-cookie') || '';
+      const fallbackAuth = authRaw.match(/(XSRF-TOKEN|movilcontrol_session)=([^;]+)/g) || [];
+      if (fallbackAuth.length > 0) cookieString = fallbackAuth.join('; ');
     }
 
     // 3. Obtener tablas (Clientes y Productos)
