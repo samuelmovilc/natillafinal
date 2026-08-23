@@ -52,6 +52,18 @@ export async function POST(req) {
     const tablesRes = await fetch('https://demo.movilcontrol.com/quotations/tables', {
       headers: { 'Cookie': cookieString }
     });
+    
+    if (!tablesRes.ok) {
+      const errText = await tablesRes.text();
+      throw new Error(`Error al obtener tablas (Status ${tablesRes.status}). Body: ${errText.substring(0, 100)}... Cookies Enviadas: ${cookieString}`);
+    }
+
+    const contentType = tablesRes.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const errText = await tablesRes.text();
+      throw new Error(`El servidor devolvió HTML en vez de JSON al pedir tablas. Posible bloqueo de IP o sesión inválida. Body: ${errText.substring(0, 100)}... Cookies Enviadas: ${cookieString}`);
+    }
+
     const tables = await tablesRes.json();
     const customers = tables.customers || [];
     
