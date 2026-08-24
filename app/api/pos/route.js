@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
-const BASE  = process.env.MICROSERVICIO_URL || '';
-const TOKEN = process.env.API_TOKEN         || '';
+const BASE  = process.env.MICROSERVICIO_URL || 'http://89.117.56.39:3001';
+const TOKEN = process.env.API_TOKEN         || '77c08577c9be234251c5ed346ad81f705f5d47aaf7ef98c4daa8b7cbe1060a53';
 const PIN   = process.env.UPLOAD_PIN        || '0521';
 
 function headers() {
