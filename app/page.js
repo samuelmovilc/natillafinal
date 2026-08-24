@@ -1,346 +1,220 @@
 'use client';
-import React, { useState } from 'react';
-import { Upload, FileSpreadsheet, Lock, CheckCircle, AlertCircle, Loader2, Download, ChevronRight } from 'lucide-react';
+
+import { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 
-const YOGLET_PRODUCTS = [
-  'COMB-NAT100',
-  'COMB-NAT200',
-  'COMB-BOL100',
-  'COMB-MAN100',
-  'COMB-MANA100'
-];
+const REQUIRED_COLS = ['NIT','Producto','Cantidad','Fecha_Entrega','Fecha_Vencimiento','Direccion','Observaciones'];
 
 export default function Home() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [pin, setPin] = useState('');
-  const [loginError, setLoginError] = useState('');
-  
-  const [orders, setOrders] = useState([]);
-  const [validationErrors, setValidationErrors] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [pin, setPin]                 = useState('');
+  const [orders, setOrders]           = useState([]);
+  const [fileName, setFileName]       = useState('');
+  const [parseErrors, setParseErrors] = useState([]);
+  const [status, setStatus]           = useState('idle');
+  const [result, setResult]           = useState(null);
+  const [errorMsg, setErrorMsg]       = useState('');
+  const fileRef = useRef();
 
-  const handleLogin = (e) => {
-    e.preventDefault();
-    if (pin === '0521') {
-      setIsAuthenticated(true);
-      setLoginError('');
-    } else {
-      setLoginError('Código incorrecto');
+  function downloadClientTemplate() {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Tipo_Documento','Numero_Documento','Nombre','Email','Telefono','Direccion','Ciudad'],
+      ['CC','900123456','Cliente Ejemplo','cliente@email.com','3001234567','Calle 10 #5-23','Bucaramanga'],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Clientes');
+    XLSX.writeFile(wb, 'plantilla_clientes.xlsx');
+  }
+
+  function downloadQuotationTemplate() {
+    const ws = XLSX.utils.aoa_to_sheet([
+      REQUIRED_COLS,
+      ['900123456','Combo Yoglet Premium x12',2,'2024-12-20','2024-12-25','Calle 10 #5-23','Entregar en la tarde'],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cotizaciones');
+    XLSX.writeFile(wb, 'plantilla_cotizaciones.xlsx');
+  }
+
+  function formatDate(val) {
+    if (!val) return '';
+    if (val instanceof Date) return val.toISOString().slice(0, 10);
+    const str = val.toString().trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+      const [d, m, y] = str.split('/');
+      return `${y}-${m}-${d}`;
     }
-  };
+    return str;
+  }
 
-  const handleFileUpload = (e) => {
+  function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
-
-    setOrders([]);
-    setValidationErrors([]);
-    setResult(null);
-
+    setFileName(file.name);
+    setOrders([]); setParseErrors([]); setResult(null); setErrorMsg(''); setStatus('idle');
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
-        
-        let errors = [];
-        let parsedOrders = [];
-
-        data.forEach((row, index) => {
-          const rowNum = index + 2; // Fila real en Excel (asumiendo cabecera en fila 1)
-          const nit = (row['NIT'] || '').toString().trim();
-          const codigoProducto = (row['Codigo_Producto'] || '').toString().trim().toUpperCase();
-          const cantidad = parseInt(row['Cantidad'] || '0');
-          const fechaEntrega = (row['Fecha_Entrega'] || '').toString().trim();
-          const fechaVenc = (row['Fecha_Vencimiento'] || '').toString().trim();
-          const observaciones = (row['Observaciones'] || '').toString().trim();
-
-          // Regex para formato YYYY-MM-DD
-          const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-
-          // Validación estricta
-          if (!nit) {
-            errors.push({ fila: rowNum, columna: 'NIT', mensaje: 'El NIT no puede estar vacío.' });
+        const wb   = XLSX.read(evt.target.result, { type: 'binary', cellDates: true });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        if (rows.length === 0) { setParseErrors(['El archivo esta vacio.']); return; }
+        const cols    = Object.keys(rows[0]);
+        const missing = REQUIRED_COLS.filter(c => !cols.includes(c));
+        if (missing.length > 0) { setParseErrors([`Columnas faltantes: ${missing.join(', ')}`]); return; }
+        const errs = [], parsed = [];
+        rows.forEach((row, i) => {
+          const rowNum = i + 2;
+          if (!row['NIT'])      errs.push(`Fila ${rowNum}: NIT vacio.`);
+          if (!row['Producto']) errs.push(`Fila ${rowNum}: Producto vacio.`);
+          if (!row['Cantidad'] || isNaN(Number(row['Cantidad'])) || Number(row['Cantidad']) < 1)
+            errs.push(`Fila ${rowNum}: Cantidad invalida.`);
+          if (!row['Fecha_Entrega'])     errs.push(`Fila ${rowNum}: Fecha_Entrega vacia.`);
+          if (!row['Fecha_Vencimiento']) errs.push(`Fila ${rowNum}: Fecha_Vencimiento vacia.`);
+          if (!errs.find(e => e.startsWith(`Fila ${rowNum}`))) {
+            parsed.push({
+              nit:             row['NIT'].toString().trim(),
+              product:         row['Producto'].toString().trim(),
+              quantity:        Number(row['Cantidad']),
+              delivery_date:   formatDate(row['Fecha_Entrega']),
+              expiration_date: formatDate(row['Fecha_Vencimiento']),
+              address:         row['Direccion']?.toString().trim() || '',
+              observations:    row['Observaciones']?.toString().trim() || '',
+            });
           }
-          if (cantidad <= 0 || isNaN(cantidad)) {
-            errors.push({ fila: rowNum, columna: 'Cantidad', mensaje: 'La cantidad debe ser un número mayor a cero.' });
-          }
-          if (!fechaEntrega || !dateRegex.test(fechaEntrega)) {
-            errors.push({ fila: rowNum, columna: 'Fecha_Entrega', mensaje: 'Obligatorio. Debe tener formato AAAA-MM-DD (Ej: 2026-12-24).' });
-          }
-          if (!fechaVenc || !dateRegex.test(fechaVenc)) {
-            errors.push({ fila: rowNum, columna: 'Fecha_Vencimiento', mensaje: 'Obligatorio. Debe tener formato AAAA-MM-DD (Ej: 2026-12-25).' });
-          }
-          if (!codigoProducto) {
-            errors.push({ fila: rowNum, columna: 'Codigo_Producto', mensaje: 'El código del producto no puede estar vacío.' });
-          } else {
-            // Check if product is exactly one of the allowed Yoglet codes
-            const isMatch = YOGLET_PRODUCTS.includes(codigoProducto);
-            if (!isMatch) {
-              errors.push({ 
-                fila: rowNum, 
-                columna: 'Codigo_Producto', 
-                mensaje: `Código "${codigoProducto}" no es válido. Debe ser uno de: ${YOGLET_PRODUCTS.join(', ')}` 
-              });
-            }
-          }
-
-          parsedOrders.push({
-            NIT: nit,
-            Codigo_Producto: codigoProducto,
-            Cantidad: cantidad,
-            Fecha_Entrega: fechaEntrega,
-            Fecha_Vencimiento: fechaVenc,
-            Observaciones: observaciones
-          });
         });
-
-        if (errors.length > 0) {
-          setValidationErrors(errors);
-        } else {
-          setOrders(parsedOrders);
-        }
+        setParseErrors(errs);
+        if (errs.length === 0) setOrders(parsed);
       } catch (err) {
-        console.error(err);
-        setValidationErrors([{ fila: 0, columna: 'Archivo', mensaje: 'Error al procesar el archivo. Asegúrate de usar la plantilla correcta.' }]);
+        setParseErrors([`Error al leer el archivo: ${err.message}`]);
       }
     };
     reader.readAsBinaryString(file);
-    // Limpiar input para permitir subir el mismo archivo tras corregirlo
-    e.target.value = '';
-  };
-
-  const handleSendToPOS = async () => {
-    if (orders.length === 0 || validationErrors.length > 0) return;
-    setIsLoading(true);
-    setResult(null);
-
-    try {
-      const response = await fetch('/api/pos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pedidos: orders, pin: '0521' })
-      });
-
-      const data = await response.json();
-      
-      if (response.ok) {
-        setResult({
-          type: 'success',
-          message: `Se crearon ${data.success} cotizaciones en el POS.`,
-          errors: data.errors
-        });
-        if (data.errors.length === 0) setOrders([]); 
-      } else {
-        setResult({ type: 'error', message: data.error || 'Error del servidor' });
-      }
-    } catch (err) {
-      setResult({ type: 'error', message: 'Fallo de conexión con el servidor.' });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 to-purple-800 p-4">
-        <div className="bg-white/10 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-md border border-white/20">
-          <div className="flex justify-center mb-6">
-            <div className="w-16 h-16 bg-white/20 text-white rounded-2xl flex items-center justify-center shadow-inner">
-              <Lock size={32} />
-            </div>
-          </div>
-          <h2 className="text-2xl font-bold text-center text-white mb-2">Portal Administrativo</h2>
-          <p className="text-center text-indigo-200 mb-8 font-light">Ingresa el PIN de seguridad</p>
-          <form onSubmit={handleLogin} className="space-y-6">
-            <input
-              type="password"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="PIN"
-              className="w-full px-4 py-4 rounded-2xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-indigo-400 text-center text-2xl tracking-[0.5em] text-white outline-none placeholder:text-white/30 transition-all"
-              autoFocus
-            />
-            {loginError && <p className="text-red-300 text-sm text-center font-medium">{loginError}</p>}
-            <button type="submit" className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold py-4 rounded-2xl shadow-lg transition-colors flex items-center justify-center gap-2">
-              Acceder <ChevronRight size={20} />
-            </button>
-          </form>
-        </div>
-      </div>
-    );
   }
 
+  async function handleSubmit() {
+    if (!pin)           { setErrorMsg('Ingresa el PIN de seguridad.'); return; }
+    if (!orders.length) { setErrorMsg('No hay pedidos validos.'); return; }
+    setStatus('loading'); setErrorMsg(''); setResult(null);
+    try {
+      const res  = await fetch('/api/pos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin, orders }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrorMsg(data.error || 'Error del servidor.'); setStatus('error'); return; }
+      setResult(data); setStatus('success');
+    } catch (err) {
+      setErrorMsg(`Error de red: ${err.message}`); setStatus('error');
+    }
+  }
+
+  const fmt = (n) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(n);
+
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-12">
-      <header className="bg-white shadow-sm border-b sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-100 p-2 rounded-lg">
-              <FileSpreadsheet className="text-indigo-600" size={24} />
-            </div>
-            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Carga Masiva de Cotizaciones</h1>
-          </div>
-          <button onClick={() => setIsAuthenticated(false)} className="text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors">
-            Cerrar Sesión
-          </button>
+    <main style={s.container}>
+      <h1 style={s.title}>Cargue Masivo Combos Navidenos Yoglet</h1>
+      <p style={s.sub}>Sube el Excel de Google Forms para crear cotizaciones en el POS automaticamente.</p>
+
+      <section style={s.card}>
+        <h2 style={s.h2}>1. Descarga las plantillas</h2>
+        <div style={s.row}>
+          <button onClick={downloadClientTemplate} style={s.btnSec}>Plantilla Clientes</button>
+          <button onClick={downloadQuotationTemplate} style={s.btnSec}>Plantilla Cotizaciones</button>
         </div>
-      </header>
+      </section>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
-        
-        {/* PASO 1 */}
-        <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <span className="bg-blue-100 text-blue-700 font-bold px-3 py-1 rounded-full text-sm">PASO 1</span>
-                <h2 className="text-xl font-bold text-slate-800">Cargar Clientes en el POS</h2>
-              </div>
-              <p className="text-slate-600 max-w-2xl">
-                Descarga la plantilla de clientes, pega allí los datos (NIT, Empresa, Dirección, etc.) e 
-                <strong className="text-slate-800"> impórtala primero dentro del Módulo de Clientes del POS</strong>. 
-                Si un cliente no existe en el POS, su cotización fallará.
-              </p>
-            </div>
-            <a 
-              href="/plantilla_clientes.xlsx" 
-              download
-              className="shrink-0 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-semibold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors"
-            >
-              <Download size={20} /> Descargar Plantilla Clientes
-            </a>
+      <section style={s.card}>
+        <h2 style={s.h2}>2. Sube el Excel de cotizaciones</h2>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: 'none' }} />
+        <button onClick={() => fileRef.current.click()} style={s.btnPri}>Seleccionar archivo Excel</button>
+        {fileName && <p style={{ marginTop: 10 }}>Archivo: <strong>{fileName}</strong></p>}
+        {parseErrors.length > 0 && (
+          <div style={s.errBox}>
+            <strong>Errores ({parseErrors.length}):</strong>
+            <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>{parseErrors.map((e,i) => <li key={i}>{e}</li>)}</ul>
           </div>
-        </section>
-
-        {/* PASO 2 */}
-        <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-2 h-full bg-indigo-500"></div>
-          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-8">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <span className="bg-indigo-100 text-indigo-700 font-bold px-3 py-1 rounded-full text-sm">PASO 2</span>
-                <h2 className="text-xl font-bold text-slate-800">Cargar Cotizaciones Automáticas</h2>
-              </div>
-              <p className="text-slate-600 max-w-2xl">
-                Descarga la plantilla de cotizaciones. Copia y pega los datos desde tu Excel de respuestas (Google Forms) 
-                respetando estrictamente las columnas. Luego sube el archivo aquí.
-              </p>
-            </div>
-            <a 
-              href="/plantilla_cotizaciones.xlsx" 
-              download
-              className="shrink-0 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 font-semibold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors"
-            >
-              <Download size={20} /> Descargar Plantilla Cotizaciones
-            </a>
-          </div>
-
-          <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-indigo-200 border-dashed rounded-2xl cursor-pointer hover:bg-indigo-50/50 transition-colors bg-slate-50">
-            <Upload className="w-12 h-12 text-indigo-400 mb-4" />
-            <span className="font-semibold text-slate-700 text-lg">Haz clic o arrastra tu archivo de cotizaciones aquí</span>
-            <span className="text-slate-500 text-sm mt-1">Formatos soportados: .xlsx, .csv</span>
-            <input type="file" className="hidden" accept=".xlsx, .csv" onChange={handleFileUpload} />
-          </label>
-        </section>
-
-        {/* VALIDATION ERRORS */}
-        {validationErrors.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-3xl p-6 shadow-sm">
-            <div className="flex items-center gap-3 text-red-700 mb-4">
-              <AlertCircle size={24} />
-              <h2 className="text-lg font-bold">¡Alto ahí! Se encontraron errores en tu archivo</h2>
-            </div>
-            <p className="text-red-600 mb-4">Corrige estos errores en tu Excel y vuelve a subir el archivo. No se enviará nada al POS hasta que el archivo esté 100% correcto.</p>
-            <div className="bg-white rounded-xl border border-red-100 overflow-hidden">
-              <table className="min-w-full text-sm text-left">
-                <thead className="bg-red-50 text-red-800 font-semibold">
-                  <tr>
-                    <th className="px-6 py-3">Fila (Excel)</th>
-                    <th className="px-6 py-3">Columna</th>
-                    <th className="px-6 py-3">Error Detectado</th>
+        )}
+        {orders.length > 0 && parseErrors.length === 0 && (
+          <div style={s.okBox}>
+            <strong>{orders.length} pedidos validos</strong> listos para enviar.
+            <div style={{ overflowX: 'auto', marginTop: 10 }}>
+              <table style={s.table}>
+                <thead><tr>{['#','NIT','Producto','Cant.','Entrega','Vence'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>{orders.map((o,i) => (
+                  <tr key={i}>
+                    <td style={s.td}>{i+1}</td><td style={s.td}>{o.nit}</td>
+                    <td style={s.td}>{o.product}</td><td style={s.td}>{o.quantity}</td>
+                    <td style={s.td}>{o.delivery_date}</td><td style={s.td}>{o.expiration_date}</td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-red-100">
-                  {validationErrors.map((e, i) => (
-                    <tr key={i}>
-                      <td className="px-6 py-3 font-medium text-red-900">{e.fila}</td>
-                      <td className="px-6 py-3 text-red-800">{e.columna}</td>
-                      <td className="px-6 py-3 text-red-600">{e.mensaje}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                ))}</tbody>
               </table>
             </div>
           </div>
         )}
+      </section>
 
-        {/* SERVER RESULT NOTIFICATION */}
-        {result && (
-          <div className={`p-6 rounded-3xl shadow-sm flex items-start gap-4 border ${result.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'}`}>
-            {result.type === 'success' ? <CheckCircle className="text-emerald-500 mt-1" size={28} /> : <AlertCircle className="text-red-500 mt-1" size={28} />}
-            <div className="flex-1">
-              <h3 className="font-bold text-lg">{result.message}</h3>
-              {result.errors && result.errors.length > 0 && (
-                <div className="mt-4 bg-white/60 rounded-xl p-4">
-                  <p className="font-semibold mb-2">Errores del POS:</p>
-                  <ul className="list-disc pl-5 space-y-1 text-sm">
-                    {result.errors.map((e, i) => <li key={i}><span className="font-medium">Fila {e.fila}:</span> {e.error}</li>)}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+      {orders.length > 0 && parseErrors.length === 0 && (
+        <section style={s.card}>
+          <h2 style={s.h2}>3. Confirmar y enviar</h2>
+          <label style={s.label}>PIN de seguridad:</label>
+          <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="****" style={s.input} />
+          <button onClick={handleSubmit} disabled={status === 'loading'} style={status === 'loading' ? s.btnDis : s.btnOk}>
+            {status === 'loading' ? 'Enviando al POS...' : `Crear ${orders.length} Cotizaciones`}
+          </button>
+          {errorMsg && <p style={{ color: '#dc2626', marginTop: 10 }}>{errorMsg}</p>}
+        </section>
+      )}
 
-        {/* PREVIEW & SUBMIT */}
-        {orders.length > 0 && validationErrors.length === 0 && (
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-6 border-b flex flex-col sm:flex-row justify-between items-center bg-emerald-50/30 gap-4">
-              <div className="flex items-center gap-3 text-emerald-700">
-                <CheckCircle size={24} />
-                <h2 className="font-bold text-lg">¡Archivo Perfecto! ({orders.length} pedidos detectados)</h2>
-              </div>
-              <button
-                onClick={handleSendToPOS}
-                disabled={isLoading}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-8 rounded-xl shadow-lg hover:shadow-emerald-200 transition-all flex items-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed w-full sm:w-auto justify-center"
-              >
-                {isLoading ? <Loader2 className="animate-spin" /> : <span>Generar Cotizaciones en POS</span>}
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-slate-500 text-left">
-                  <tr>
-                    <th className="px-6 py-4 font-medium uppercase tracking-wider">NIT</th>
-                    <th className="px-6 py-4 font-medium uppercase tracking-wider">Código Producto</th>
-                    <th className="px-6 py-4 font-medium uppercase tracking-wider">Cantidad</th>
-                    <th className="px-6 py-4 font-medium uppercase tracking-wider">F. Entrega</th>
-                    <th className="px-6 py-4 font-medium uppercase tracking-wider">Observaciones</th>
+      {status === 'success' && result && (
+        <section style={s.card}>
+          <h2 style={s.h2}>Resultado</h2>
+          <p>Creadas: <strong style={{ color: '#16a34a' }}>{result.creadas}</strong> | Fallidas: <strong style={{ color: result.fallidas > 0 ? '#dc2626' : '#6b7280' }}>{result.fallidas}</strong></p>
+          {result.resultados?.length > 0 && (
+            <div style={{ overflowX: 'auto', marginTop: 12 }}>
+              <table style={s.table}>
+                <thead><tr>{['#','NIT','Cliente','N Cot','Producto','Total'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>{result.resultados.map((r,i) => (
+                  <tr key={i}>
+                    <td style={s.td}>{r.fila}</td><td style={s.td}>{r.nit}</td>
+                    <td style={s.td}>{r.cliente}</td><td style={s.td}>{r.numero}</td>
+                    <td style={s.td}>{r.producto}</td><td style={s.td}>{fmt(r.total)}</td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {orders.map((o, i) => (
-                    <tr key={i} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-6 py-4 font-medium text-slate-900">{o.NIT}</td>
-                      <td className="px-6 py-4 text-slate-700 font-mono">{o.Codigo_Producto}</td>
-                      <td className="px-6 py-4 font-bold text-indigo-600">{o.Cantidad}</td>
-                      <td className="px-6 py-4 text-slate-700">{o.Fecha_Entrega}</td>
-                      <td className="px-6 py-4 text-slate-500 truncate max-w-xs">{o.Observaciones}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                ))}</tbody>
               </table>
             </div>
-          </div>
-        )}
-      </main>
-    </div>
+          )}
+          {result.errores?.length > 0 && (
+            <div style={{ ...s.errBox, marginTop: 16 }}>
+              <strong>Filas con error:</strong>
+              <ul style={{ paddingLeft: 18, marginTop: 8 }}>
+                {result.errores.map((e,i) => <li key={i}>Fila {e.fila} NIT {e.nit}: {e.razon}</li>)}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+    </main>
   );
 }
+
+const s = {
+  container: { maxWidth: 920, margin: '0 auto', padding: '2rem 1rem', fontFamily: 'system-ui,sans-serif', color: '#1f2937' },
+  title:     { fontSize: '1.6rem', fontWeight: 700, marginBottom: 4 },
+  sub:       { color: '#6b7280', marginBottom: 24 },
+  card:      { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 10, padding: '1.5rem', marginBottom: 20 },
+  h2:        { fontSize: '1.1rem', fontWeight: 600, marginBottom: 12 },
+  row:       { display: 'flex', gap: 12, flexWrap: 'wrap' },
+  label:     { display: 'block', fontWeight: 500, marginBottom: 6 },
+  input:     { border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 12px', fontSize: '1rem', width: 160, marginBottom: 14 },
+  errBox:    { background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '12px 16px', marginTop: 14, color: '#b91c1c', fontSize: '0.9rem' },
+  okBox:     { background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '12px 16px', marginTop: 14, color: '#166534', fontSize: '0.9rem' },
+  table:     { width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' },
+  th:        { background: '#e5e7eb', padding: '6px 10px', textAlign: 'left', fontWeight: 600 },
+  td:        { padding: '5px 10px', borderBottom: '1px solid #e5e7eb' },
+  btnPri:    { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 7, padding: '10px 20px', cursor: 'pointer', fontWeight: 600 },
+  btnSec:    { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 7, padding: '9px 18px', cursor: 'pointer', fontWeight: 500 },
+  btnOk:     { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 7, padding: '12px 24px', cursor: 'pointer', fontWeight: 700, fontSize: '1rem' },
+  btnDis:    { background: '#9ca3af', color: '#fff', border: 'none', borderRadius: 7, padding: '12px 24px', cursor: 'not-allowed', fontWeight: 700, fontSize: '1rem' },
+};
