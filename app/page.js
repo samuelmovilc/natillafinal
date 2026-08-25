@@ -114,7 +114,10 @@ export default function Home() {
 
   return (
     <main style={s.container}>
-      <h1 style={s.title}>Cargue Masivo Combos Navidenos Yoglet</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <h1 style={s.title}>Cargue Masivo Combos Navidenos Yoglet</h1>
+        <a href="/cuenta-cobro" style={s.btnCuentaCobro}>🧾 Cuenta de Cobro</a>
+      </div>
       <p style={s.sub}>Sube el Excel de Google Forms para crear cotizaciones en el POS automaticamente.</p>
 
       <section style={s.card}>
@@ -216,5 +219,6 @@ const s = {
   btnPri:    { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 7, padding: '10px 20px', cursor: 'pointer', fontWeight: 600 },
   btnSec:    { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 7, padding: '9px 18px', cursor: 'pointer', fontWeight: 500 },
   btnOk:     { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 7, padding: '12px 24px', cursor: 'pointer', fontWeight: 700, fontSize: '1rem' },
-  btnDis:    { background: '#9ca3af', color: '#fff', border: 'none', borderRadius: 7, padding: '12px 24px', cursor: 'not-allowed', fontWeight: 700, fontSize: '1rem' },
+  btnDis:         { background: '#9ca3af', color: '#fff', border: 'none', borderRadius: 7, padding: '12px 24px', cursor: 'not-allowed', fontWeight: 700, fontSize: '1rem' },
+  btnCuentaCobro: { background: '#1a56db', color: '#fff', borderRadius: 7, padding: '9px 18px', fontWeight: 600, fontSize: '0.9rem', textDecoration: 'none' },
 };
