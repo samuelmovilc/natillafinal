@@ -116,7 +116,7 @@ export default function Home() {
     <main style={s.container}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
         <h1 style={s.title}>Cargue Masivo Combos Navidenos Yoglet</h1>
-        <a href="/cuenta-cobro" style={s.btnCuentaCobro}>🧾 Cuenta de Cobro</a>
+        <a href="/cuentas" style={s.btnCuentaCobro}>🧾 Cuenta de Cobro</a>
       </div>
       <p style={s.sub}>Sube el Excel de Google Forms para crear cotizaciones en el POS automaticamente.</p>
 
